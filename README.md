@@ -1,5 +1,7 @@
 # dsh-upgrade-skill
 
+**English** | [简体中文](README.zh-CN.md)
+
 A battle-tested **Agent Skill** for upgrading [DeepSeek Harness (`dsh`)](https://github.com/deepseek-ai/deepseek-harness) without bricking your install.
 
 Every rule here comes from a real failed upgrade — not from reading the changelog.
