@@ -28,13 +28,28 @@ else
   echo "  3080 端口没有进程在跑"
 fi
 
-# ---- registry
+# ---- registry（npmjs 不通时自动回退 npmmirror，见 SKILL.md 坑 10）
 say "registry 版本"
-DATA=$(curl -s --max-time 25 "https://registry.npmjs.org/@deepseek-ai%2Fdsh" 2>/dev/null)
-if [ -z "$DATA" ]; then
-  echo "  ❌ 无法访问 registry（网络问题？）" >&2
+REG="https://registry.npmjs.org"
+# 不用管道判首字符：set -o pipefail 下 head 提前退出会让 printf 吃 SIGPIPE
+looks_like_json() {
+  case "$1" in
+    \{*) return 0 ;;
+    *)   return 1 ;;
+  esac
+}
+
+DATA=$(curl -s --max-time 25 "$REG/@deepseek-ai%2Fdsh" 2>/dev/null)
+if ! looks_like_json "$DATA"; then
+  echo "  ⚠ registry.npmjs.org 不可达，回退 npmmirror"
+  REG="https://registry.npmmirror.com"
+  DATA=$(curl -s --max-time 25 "$REG/@deepseek-ai%2Fdsh" 2>/dev/null)
+fi
+if ! looks_like_json "$DATA"; then
+  echo "  ❌ npmjs 与 npmmirror 都不可达（检查网络/代理）" >&2
   exit 1
 fi
+echo "  数据源: $REG"
 
 echo "$DATA" | node -e '
 let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
@@ -71,7 +86,9 @@ let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
   for(const n of newer) console.log(`  · ${n}`);
 })' "$CUR"
 
-cat <<'EOF'
+cat <<EOF
+
+数据源: $REG （镜像可能有数小时同步延迟）
 
 下一步：
   · 目标是新版本 → 用 scripts/preflight.sh <版本> 做隔离预检

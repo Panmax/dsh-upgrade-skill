@@ -360,6 +360,49 @@ code: UNKNOWN_MODEL
 **仍要小心**：它会把「该行拥有的字段」重写一遍。升级前备份
 `cordis.patch.yml`，改完 `diff` 一下，确认没有字段被静默清空。
 
+
+### 坑 10：registry.npmjs.org / github.com 不通
+
+**症状**
+
+```
+curl: (35) ... 000
+npm error network ...
+```
+
+或者 `curl` 直接返回 `000` / 空响应，而浏览器和域名镜像却正常。
+
+**原因**：本地代理（常见 `127.0.0.1:8899`）或网络策略屏蔽了 `registry.npmjs.org`
+和 `github.com`，但国内镜像仍可达。用 `--prefer-online`、清缓存都无效——这是**链路问题**。
+
+> 实测是**间歇性**的：同一台机器几分钟后 npmjs 可能又通了。
+> 所以脚本里要做回退而不是直接报错，人也不要看到一次 000 就断定「网络坏了」。
+
+**判定**
+
+```sh
+for u in https://registry.npmjs.org/ https://registry.npmmirror.com/ https://github.com; do
+  printf '%-38s ' "$u"; curl -s --max-time 8 -o /dev/null -w '%{http_code}\n' "$u"
+done
+# npmjs / github 返回 000 而 npmmirror 返回 200 = 命中本坑
+```
+
+**修复**：改用 npmmirror（完整镜像，integrity 一致）。
+
+```sh
+# 查版本
+curl -s "https://registry.npmmirror.com/@deepseek-ai%2Fdsh" | node -e '...'
+
+# 装插件时指定 registry（dsh plugin 会把参数透传给 pnpm）
+dsh plugin --profile web add <包>@<版本> --registry=https://registry.npmmirror.com
+```
+
+**注意**
+- 镜像同步有几分钟到几小时延迟，刚发布的版本可能还查不到
+- 作用域包（`@scope/name`）在某些镜像上要用**不编码**的斜杠：
+  `https://registry.npmmirror.com/@scope/name`，用 `%2F` 可能 404
+- `check-update.sh` 已内置回退：npmjs 不通时自动切 npmmirror
+
 ---
 
 ## 插件兼容性判断
@@ -404,6 +447,7 @@ dsh plugin --profile web add "some-plugin@1.2.3"     # 不加 ^
 | `EBADENGINE` 或诡异语法错误 | 坑 5（Node 版本） |
 | 升级后旧会话读不出来 | 坑 6（会话格式，回滚或迁移） |
 | 换了终端 `dsh` 就没了 | 坑 7（npx PATH） |
+| `curl` 返回 000 / `npm error network` | 坑 10（换 npmmirror 镜像） |
 
 ---
 
