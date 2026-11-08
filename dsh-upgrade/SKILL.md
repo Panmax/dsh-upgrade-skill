@@ -403,6 +403,59 @@ dsh plugin --profile web add <包>@<版本> --registry=https://registry.npmmirro
   `https://registry.npmmirror.com/@scope/name`，用 `%2F` 可能 404
 - `check-update.sh` 已内置回退：npmjs 不通时自动切 npmmirror
 
+### 坑 11：第三方插件写死旧 Remote 契约 —— 手机端弹 `wire field "request" failed boundary validation`
+
+**症状**（手机 App 弹窗原文，桌面 Web 一切正常）
+
+```
+gateway/input-invalid: typert gateway: session/attachment: wire field "request" failed boundary validation
+```
+
+**原因**：dsh `0.2.2` 改了 `session/attachment` 的请求体——
+旧 `{ sessionId, attachmentId }` → 新 `{ sessionId, attachment: ImageAttachmentRef }`
+（完整 ref：`attachmentId/mediaType/bytes/width/height[/name/originalDimensions]`），
+同时取消了「附件必须被本 Session 引用」的校验，改由 gateway 权限控制。
+`dsh-plugin-mobile-gateway@0.11.x`（README 自述基线 `DSH 0.2.1-rc.2`）仍按旧契约转发
+`{ sessionId, attachmentId }`，被新 Host 的严格边界校验直接拒绝。
+
+典型表现：**手机能发图（上传契约没变），但读回图片（消息缩略图/大图）就弹窗**；
+桌面浏览器同一会话的图片正常 —— 这就是「服务端没坏，是客户端插件契约旧了」的分水岭。
+
+**判定**
+
+```sh
+# 1) 手机网关插件版本 vs Host 版本
+node -p "require(process.env.HOME+'/.dsh/profiles/web/node_modules/dsh-plugin-mobile-gateway/package.json').version"
+node -p "require(process.env.HOME+'/.dsh/runtime/current/node_modules/@deepseek-ai/dsh/package.json').version"
+
+# 2) 插件 README 有没有适配当前 Host（无输出 = 没适配）
+grep -n "0\.2\.2" ~/.dsh/profiles/web/node_modules/dsh-plugin-mobile-gateway/README.md
+
+# 3) 新旧契约对照（Host 侧源码即契约）
+grep -n "attachmentId" ~/.dsh/runtime/current/node_modules/@deepseek-ai/dsh-api-session-controller/lib/typert.host.js | head -3
+```
+
+**修复**：把插件升到适配 `0.2.2-rc.x` 的版本（`dsh-plugin-mobile-gateway@0.12.0` 起，
+它在 host adapter 里先用会话历史把 `attachmentId` 解析成完整 ref 再调用；
+手机 App 协议不变，**不需要升级 App**）。
+
+```sh
+dsh plugin --profile web add dsh-plugin-mobile-gateway@0.12.0
+# 或直接在 profile 里装
+cd ~/.dsh/profiles/web && pnpm add dsh-plugin-mobile-gateway@0.12.0
+# 然后重启 dsh web，手机下拉刷新重连
+```
+
+注意：`0.12.0` 要求 **Node ≥ 24.9**，先确认再升。
+
+**无法升级时的临时回滚**：`ln -sfn 0.2.1-rc.5 ~/.dsh/runtime/current` 并重启
+（0.11.3 的基线是 `0.2.1-rc.2`，与 0.2.1-rc.5 同契约）。
+
+> 通用化：任何第三方插件都可能内嵌某版 Remote 契约。升级后**能启动不代表能用**——
+> 单项方法报 `gateway/input-invalid` / `gateway/arguments-invalid` 时，
+> 去插件的 `lib/*.mjs` 里 grep 端点名（如 `session', 'attachment'`），
+> 看它构造的参数形状是否还和新版 `typert.host.js` 一致。
+
 ---
 
 ## 插件兼容性判断
@@ -448,6 +501,7 @@ dsh plugin --profile web add "some-plugin@1.2.3"     # 不加 ^
 | 升级后旧会话读不出来 | 坑 6（会话格式，回滚或迁移） |
 | 换了终端 `dsh` 就没了 | 坑 7（npx PATH） |
 | `curl` 返回 000 / `npm error network` | 坑 10（换 npmmirror 镜像） |
+| 手机端弹 `gateway/input-invalid ... wire field "request" failed boundary validation` | 坑 11（第三方网关插件写死旧 Remote 契约） |
 
 ---
 
