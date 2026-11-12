@@ -179,6 +179,24 @@ npm cache clean --force
 
 > 副作用：这个污染同时影响 `npm view`，所以**任何「有没有新版本」的检查都别用 `npm view`**，用 `curl` 直查 registry。
 
+**反向情况也要认：GitHub 有 release，npm 还没发**
+
+实测遇到过：GitHub 上 `dsh-vX.Y.Z` 的 release 已发布（甚至标了 `prerelease`），
+但 `https://registry.npmjs.org/@deepseek-ai/dsh/<版本>` 返回 **404**，
+npmmirror 也是 404 —— 说明包还没推到 registry。
+
+判定：
+
+```sh
+# GitHub 有、npm 没有 = 还不能装
+curl -s -o /dev/null -w 'github tag: %{http_code}\n' \
+  "https://api.github.com/repos/deepseek-ai/deepseek-harness/releases/tags/dsh-v<版本>"
+curl -s -o /dev/null -w 'npm version: %{http_code}\n' \
+  "https://registry.npmjs.org/@deepseek-ai/dsh/<版本>"
+```
+
+`200 + 404` = **等**，不要反复重试安装。发布顺序不保证，两个方向都出现过。
+
 ### 坑 2：duplicate loader entry id —— 升级后起不来最常见的原因
 
 **症状**
