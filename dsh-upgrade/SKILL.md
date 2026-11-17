@@ -474,6 +474,21 @@ cd ~/.dsh/profiles/web && pnpm add dsh-plugin-mobile-gateway@0.12.0
 > 去插件的 `lib/*.mjs` 里 grep 端点名（如 `session', 'attachment'`），
 > 看它构造的参数形状是否还和新版 `typert.host.js` 一致。
 
+**配套坑：插件小版本与 dsh rc 一一绑定，别只升一边。**
+实测 `dsh-plugin-mobile-gateway`：`0.12.0 ↔ DSH 0.2.2-rc.1`、`0.12.1 ↔ DSH 0.2.2-rc.3`
+（README 首行 "Targets DSH …" / description 里写明）。包上没有 `engines.dsh`，
+所以 `pnpm add` 不会拦你，**只升插件或只升 dsh 都会跨契约**。
+
+判定（版本绑定对照）：
+
+```sh
+curl -s --max-time 20 "https://registry.npmmirror.com/dsh-plugin-mobile-gateway" \
+  | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const j=JSON.parse(s);const t=j["dist-tags"];console.log("latest:",t.latest);console.log(j.versions[t.latest].description)})'
+```
+
+要升级就**成对升**：先按本 skill 流程把 dsh 升到插件声明的那条 rc（rc 线走 `next` tag，
+不要用 `npm view` 看，用 curl 查 dist-tags），再升插件，最后重启。
+
 ---
 
 ## 插件兼容性判断
