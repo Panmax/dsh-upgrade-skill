@@ -36,15 +36,48 @@ ok()  { printf '  \033[32m✓\033[0m %s\n' "$*"; }
 bad() { printf '  \033[31m✗\033[0m %s\n' "$*"; FAIL=1; }
 warn(){ printf '  \033[33m!\033[0m %s\n' "$*"; }
 
+# 本地代理常把 registry 请求间歇性掐断（首个请求必挂、重试就通）。
+# 所以所有 HTTP 都必须重试，且不能用 `cmd || echo 000` 写法（会拼成 "000000"）。
+retry_http_code() {
+  local url="$1" i code
+  for i in 1 2 3 4 5; do
+    code=$(curl -s --max-time 20 -o /dev/null -w '%{http_code}' "$url" 2>/dev/null) || code=000
+    [ "$code" != "000" ] && { printf '%s' "$code"; return 0; }
+    sleep 1
+  done
+  printf '000'
+}
+
+retry_http_json() {
+  local url="$1" i out
+  for i in 1 2 3 4 5; do
+    out=$(curl -s --max-time 30 "$url" 2>/dev/null)
+    case "$out" in
+      \{*) if printf '%s' "$out" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{JSON.parse(s);process.exit(0)}catch{process.exit(1)}})' 2>/dev/null; then
+              printf '%s' "$out"; return 0
+            fi ;;
+    esac
+    sleep 1
+  done
+  printf ''
+}
+
+# registry 选择：默认 npmjs，不通则回退 npmmirror（见 SKILL.md 坑 10）
+REG="https://registry.npmjs.org"
+if [ "$(retry_http_code "$REG/@deepseek-ai%2Fdsh")" != "200" ]; then
+  warn "registry.npmjs.org 不可达，回退 npmmirror"
+  REG="https://registry.npmmirror.com"
+fi
+echo "  registry: $REG"
+
 # ---------------------------------------------------------------- 1. 版本存在性
 say "检查版本 ${VER} 是否真的发布"
-HTTP=$(curl -s -o /dev/null -w '%{http_code}' \
-  "https://registry.npmjs.org/@deepseek-ai/dsh/$VER" 2>/dev/null || echo 000)
+HTTP=$(retry_http_code "$REG/@deepseek-ai/dsh/$VER")
 if [ "$HTTP" = "200" ]; then ok "registry 返回 200"; else bad "registry 返回 ${HTTP}（版本不存在或网络问题）"; exit 1; fi
 
 # ---------------------------------------------------------------- 2. Node 门槛
 say "检查 Node 要求"
-NEED=$(curl -s "https://registry.npmjs.org/@deepseek-ai/dsh/$VER" 2>/dev/null \
+NEED=$(retry_http_json "$REG/@deepseek-ai/dsh/$VER" \
   | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const j=JSON.parse(s);console.log(j.engines?.node||"(无声明)")}catch{console.log("(解析失败)")}})')
 echo "  该版本要求: $NEED"
 echo "  当前 node : $(node -v 2>/dev/null || echo '未安装')"
@@ -64,7 +97,7 @@ say "安装到 ${RT}"
 if [ ! -f "$BIN" ]; then
   mkdir -p "$RT" || { bad "无法创建 $RT"; exit 2; }
   ( cd "$RT" && npm install --no-audit --no-fund --cache "$(mktemp -d)" \
-      "@deepseek-ai/dsh@$VER" >/tmp/dsh-preflight-install.log 2>&1 )
+      --registry="$REG" "@deepseek-ai/dsh@$VER" >/tmp/dsh-preflight-install.log 2>&1 )
   if [ -f "$BIN" ]; then ok "安装完成"; else bad "安装失败，见 /tmp/dsh-preflight-install.log"; tail -20 /tmp/dsh-preflight-install.log; exit 1; fi
 else
   ok "已存在，跳过安装"
