@@ -112,6 +112,27 @@ for f in settings.yaml.imported settings.yaml; do
 done
 [ -d "$DSH_HOME_DIR/sessions" ] && cp -a "$DSH_HOME_DIR/sessions" "$SB/"
 [ -d "$DSH_HOME_DIR/storages" ] && cp -a "$DSH_HOME_DIR/storages" "$SB/"
+
+# pnpm 给 `link:` 依赖生成的是**相对**软链（../../../../Code/...）。
+# 复制到 /tmp 后相对路径失效，会误报 "cannot resolve profile bundle"。
+# 这里把沙箱里的相对软链改写成指向原仓库的绝对路径。
+fix_relative_links() {
+  local src="$1" dst="$2" lnk tgt base real rel
+  find "$src" -maxdepth 2 -type l 2>/dev/null | while IFS= read -r lnk; do
+    tgt=$(readlink "$lnk" 2>/dev/null) || continue
+    case "$tgt" in /*) continue ;; esac
+    base=$(cd "$(dirname "$lnk")" 2>/dev/null && cd "$(dirname "$tgt")" 2>/dev/null && pwd) || continue
+    real="$base/$(basename "$tgt")"
+    [ -e "$real" ] || continue
+    rel="${lnk#$src/}"
+    [ -L "$dst/$rel" ] && ln -sfn "$real" "$dst/$rel"
+  done
+}
+for nmdir in "$DSH_HOME_DIR"/profiles/*/node_modules; do
+  [ -d "$nmdir" ] || continue
+  prof=$(basename "$(dirname "$nmdir")")
+  fix_relative_links "$nmdir" "$SB/profiles/$prof/node_modules"
+done
 ok "沙箱: $SB"
 
 # ---------------------------------------------------------------- 5. dump-config

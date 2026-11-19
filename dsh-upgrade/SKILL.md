@@ -489,6 +489,34 @@ curl -s --max-time 20 "https://registry.npmmirror.com/dsh-plugin-mobile-gateway"
 要升级就**成对升**：先按本 skill 流程把 dsh 升到插件声明的那条 rc（rc 线走 `next` tag，
 不要用 `npm view` 看，用 curl 查 dist-tags），再升插件，最后重启。
 
+
+### 坑 12：预检沙箱误报「cannot resolve profile bundle」（本地 `link:` 插件）
+
+**症状**
+
+```
+dsh: skipping profile bundle "my-local-plugin": Error: dsh: cannot resolve profile bundle "my-local-plugin"
+     from the dsh installation or /var/folders/.../profiles/web
+dsh: [ .../profiles/web/cordis.patch.yml] patch: entry "my-patch-row" not found
+```
+
+**原因**：pnpm 给 `link:` 依赖（`"my-plugin": "link:/Users/me/Code/my-plugin"`）生成的
+软链是**相对路径**（`../../../../Code/my-plugin`）。预检把 profile 复制到 `/tmp/...` 后，
+相对路径指到了错误位置，于是解析失败。
+
+**这是沙箱假象，不是真故障。** 生产环境里那个相对路径是对的。
+
+**判定**（确认是相对软链）
+
+```sh
+readlink ~/.dsh/profiles/web/node_modules/<包名>
+# 输出 ../../../../Code/...  → 命中本坑
+# 输出 /Users/.../...        → 绝对链，不受影响
+```
+
+**修复**：`preflight.sh` 已自动处理——复制后把沙箱里的相对软链改写成指向原仓库的绝对路径。
+手写预检脚本时照做，或忽略这类告警（它们只影响本地 link 插件）。
+
 ---
 
 ## 插件兼容性判断
@@ -534,6 +562,7 @@ dsh plugin --profile web add "some-plugin@1.2.3"     # 不加 ^
 | 升级后旧会话读不出来 | 坑 6（会话格式，回滚或迁移） |
 | 换了终端 `dsh` 就没了 | 坑 7（npx PATH） |
 | `curl` 返回 000 / `npm error network` | 坑 10（换 npmmirror 镜像） |
+| 预检里 `cannot resolve profile bundle` | 坑 12（本地 link 插件，沙箱假象） |
 | 手机端弹 `gateway/input-invalid ... wire field "request" failed boundary validation` | 坑 11（第三方网关插件写死旧 Remote 契约） |
 
 ---
