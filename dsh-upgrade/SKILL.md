@@ -514,8 +514,39 @@ readlink ~/.dsh/profiles/web/node_modules/<包名>
 # 输出 /Users/.../...        → 绝对链，不受影响
 ```
 
-**修复**：`preflight.sh` 已自动处理——复制后把沙箱里的相对软链改写成指向原仓库的绝对路径。
-手写预检脚本时照做，或忽略这类告警（它们只影响本地 link 插件）。
+**升级版症状：`dsh plugin add` 直接崩**
+
+```
+Error: dsh: cannot resolve profile bundle "my-local-plugin" from the dsh installation or /tmp/xxx/profiles/web
+    at resolveBundleDir (.../dsh-app-boot/lib/index.js)
+    at bundleManifest (.../dsh-plugin-manager/lib/types/operations.js)
+    at reconcile (.../dsh-plugin-manager/lib/types/operations.js)
+```
+
+pnpm 装包**成功**了，但随后 plugin-manager 的 `reconcile` 阶段要逐个解析 bundle，
+遇到断掉的 link 就抛错退出，整个 `dsh plugin add` 失败。
+
+**修复**（任选）
+
+1. `preflight.sh` 已自动处理——复制后把沙箱里的相对软链改写成绝对路径。
+   **但注意**：`dsh plugin add` 内部会再跑一次 pnpm，**软链会被重新写成相对形式**，
+   所以「先修链再 add」还是会失败。
+2. **最省事**：在沙箱 profile 里临时移除所有 `link:` 依赖（`dependencies` + `dsh.profile.bundles`），
+   只测 npm 装的插件。本地 link 插件本来也不在这次升级范围内。
+
+```sh
+# 在沙箱 profile 的 package.json 里去掉 link: 依赖
+node -e '
+const fs=require("fs"),p=process.argv[1];const d=JSON.parse(fs.readFileSync(p,"utf8"));
+const link=Object.keys(d.dependencies||{}).filter(k=>String(d.dependencies[k]).startsWith("link:"));
+link.forEach(k=>delete d.dependencies[k]);
+const b=d.dsh?.profile?.bundles; if(b) d.dsh.profile.bundles=b.filter(x=>!link.includes(x));
+fs.writeFileSync(p,JSON.stringify(d,null,2));console.log("removed:",link);
+' /tmp/sandbox/profiles/web/package.json
+```
+
+> 移除 bundle 后，`cordis.patch.yml` 里针对它的 patch 行会报 `entry "xxx" not found`，
+> 这条告警在沙箱里属预期，**不影响结论**。
 
 ---
 
