@@ -548,6 +548,55 @@ fs.writeFileSync(p,JSON.stringify(d,null,2));console.log("removed:",link);
 > 移除 bundle 后，`cordis.patch.yml` 里针对它的 patch 行会报 `entry "xxx" not found`，
 > 这条告警在沙箱里属预期，**不影响结论**。
 
+### 坑 13：插件升级后「UI 在、功能不能用」——宿主半没重载（客户端/宿主版本错位）
+
+**症状**
+
+- 插件管理页显示 `enabled: true`、`fiberPhase: active`；浏览器里按钮和 `/rewind` 命令都还在。
+- 点按钮或确认回退时失败；DevTools Network 里 `POST /api/<plugin>/v1/preview`、`/v1/commit` 返回 `404 not found`。
+- 实测：`dsh-rewind-plugin` 从 `0.22.2` 升到 `0.23.0` 后，
+  `POST /api/dsh-rewind/v1/health` / `v1/preview` → `HTTP 404 not found`，
+  而旧路由 `POST /api/dsh-rewind/preview` → `HTTP 200`。
+
+**原因**：`dsh web` 进程启动早于插件升级。dsh 的 HMR 只热更新**浏览器客户端 bundle**（轮询 `lib/client.js` 的 stat）；
+宿主 Node 半的 `lib/index.js` 不会因 profile `package.json` 里的插件版本变化自动重载——
+profile manifest watcher 只比较 `dsh.profile.bundles` 的名单，版本变化不触发 reconcile。
+结果：浏览器拿到 0.23.0 的 client，Node 里仍是 0.22.2 的 host；client 调用 0.23.0 新增的
+`/api/dsh-rewind/v1/*`，宿主没有这些路由，于是 404。
+
+**判定**
+
+```sh
+# 1) 进程启动时间 vs 插件文件 ctime（进程早于文件 = 可疑）
+pgrep -fl 'dsh.*web'
+ps -o lstart= -p <PID>
+stat -f '%Sm %Sc %N' ~/.dsh/profiles/web/node_modules/dsh-rewind-plugin/lib/index.js
+
+# 2) 客户端 bundle 实际调用的路由（新）
+grep -o 'api/dsh-rewind[^"`]*' ~/.dsh/profiles/web/node_modules/dsh-rewind-plugin/lib/client.js | sort -u
+# 对照运行中宿主实际注册的路由（旧）：
+grep -o '"/api/dsh-rewind[^"]*"' ~/.dsh/profiles/web/node_modules/dsh-rewind-plugin/lib/index.js | sort -u
+```
+
+> `dsh web` 的 API 有进程 token，命令行直接 `curl` 会 401；在浏览器 DevTools 的 Network 面板看
+> `v1/preview` 是否 404 最直接。
+
+**修复**：重启 `dsh web`，让宿主半和客户端半加载同一份新文件——只刷新浏览器不够。
+
+```sh
+# 在运行 dsh web 的终端 Ctrl+C，然后重新启动
+dsh web
+# 或
+kill <PID> && dsh web
+```
+
+**预防**：插件升级后一定重启 `dsh web`。从插件页执行更新会尝试 `publishAndReload`，
+但 `pnpm add`、`dsh plugin` CLI 或手工改 profile 都不会通知正在运行的进程。
+
+> 通用化：任何同时有 Host 半和 client 半（`dsh.client` 声明）的第三方插件都可能中招，
+> 典型症状是「UI 在、接口 404」。对比 client bundle 的 fetch 路径和宿主 `lib/index.js`
+> 的 `registerRoute` 路径即可确认。
+
 ---
 
 ## 插件兼容性判断
@@ -594,6 +643,7 @@ dsh plugin --profile web add "some-plugin@1.2.3"     # 不加 ^
 | 换了终端 `dsh` 就没了 | 坑 7（npx PATH） |
 | `curl` 返回 000 / `npm error network` | 坑 10（换 npmmirror 镜像） |
 | 预检里 `cannot resolve profile bundle` | 坑 12（本地 link 插件，沙箱假象） |
+| 插件升级后 UI 在但功能报错、`/api/<plugin>/v1/*` 404 | 坑 13（宿主半没重载，重启 dsh web） |
 | 手机端弹 `gateway/input-invalid ... wire field "request" failed boundary validation` | 坑 11（第三方网关插件写死旧 Remote 契约） |
 
 ---
