@@ -630,6 +630,41 @@ dsh --patch ~/.dsh-bili/.bili-acp.patch.yml --profile web --dump-config
 看不到启动时注入的 `--patch`。以 `ps` 里子进程的 `--patch /.../.bili-acp.patch.yml` 和
 `bili.log` 里的 `[dsh-client] bili-native-dsh` 为准，不要据此判断插件没加载。
 
+**坑 A：`nested re-entry into the bili fetch chain detected (#1662)`**
+
+bili 靠包装 `globalThis.fetch` 接管请求。任何**也包装 fetch** 的插件会让链变两层：
+
+```
+[native-client] [bili-native] nested re-entry into the bili fetch chain detected (#1662)
+— a coexisting plugin re-wrapped bili's own chain; terminating the descent at the oldest live anchor
+```
+
+判定：
+
+```sh
+grep -rlE "globalThis\.fetch\s*=" ~/.dsh/profiles/web/node_modules --include="*.js"
+```
+
+实测命中 `@gausszhou/dsh-opencode-session-id`（它给 `opencode*` provider 注入 session 头）。
+bili 会截断，不会崩，但两层包装谁生效不确定。若该插件只在 `opencode*` provider 下有用、
+而当前默认 provider 不是它（例如走 bili 的 `magpie`），直接删掉即可：
+`dsh plugin --profile web remove <包名>`。
+
+**坑 B：patch 里的 `config.auto: false` 打在已 `disabled: true` 的 row 上 —— 完全无效**
+
+`.bili-acp.patch.yml` 给顶层 `compaction-basic` 设 `config.auto: false`，但该 row 本来就被
+`@deepseek-ai/dsh-web-app` 标了 `disabled: true`。真正在跑的是 4 个 preset 里**嵌套的**
+`compaction-basic`（无 `auto: false`）。结果 dsh 原生自动压缩仍然会触发，日志出现：
+
+```
+dsh native compaction detected (N/M covered id(s) retained, checkpoint framing in resent history)
+— rebasing ACP state onto the compacted history
+```
+
+判定：`--dump-config` 里 `grep -A5 "^- id: compaction-basic$"` 看顶层是否 `disabled: true`，
+再 `grep -n "id: compaction-basic"` 数出所有嵌套实例 —— 顶层那份配置是死的。
+凡 patch 只改 config 不改 `disabled`，先确认这条 row 到底有没有在跑。
+
 ---
 
 ## 插件兼容性判断
