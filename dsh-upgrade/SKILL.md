@@ -625,6 +625,11 @@ dsh --patch ~/.dsh-bili/.bili-acp.patch.yml --profile web --dump-config
 > 判断是否真的分叉：`readlink ~/.dsh-bili/profiles`。
 > 输出 `/Users/you/.dsh/profiles` = 同一份；输出空（真实目录）= 真分叉，插件版本会各走各的。
 
+**`bili doctor` / `bili plugin list` 会误报**：在 `bili dsh` launcher 模式下，它们仍可能显示
+`dsh absent host-managed not installed` / `dsh not installed`，因为它们只做静态安装检测，
+看不到启动时注入的 `--patch`。以 `ps` 里子进程的 `--patch /.../.bili-acp.patch.yml` 和
+`bili.log` 里的 `[dsh-client] bili-native-dsh` 为准，不要据此判断插件没加载。
+
 ---
 
 ## 插件兼容性判断
