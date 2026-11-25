@@ -597,6 +597,34 @@ kill <PID> && dsh web
 > 典型症状是「UI 在、接口 404」。对比 client bundle 的 fetch 路径和宿主 `lib/index.js`
 > 的 `registerRoute` 路径即可确认。
 
+
+## 外挂 patch 模式（billion-context 的 `bili dsh` 这类）
+
+有些工具不改 profile，而是用 `--patch <file>` 在启动时叠一层。
+
+**检查兼容性时，dump-config 必须带同一个 patch**，否则你看的是「没装」的状态：
+
+```sh
+dsh --patch ~/.dsh-bili/.bili-acp.patch.yml --profile web --dump-config
+```
+
+检查清单：
+
+| 项 | 怎么看 |
+|---|---|
+| patch 层有没有报错 | 上面命令的 stderr 必须为空 |
+| 插入的 row 在不在 | `grep -c "id: <row-id>$"` |
+| 有没有撞车 | `grep '^- id:' \| sort \| uniq -d` |
+| 覆盖的 row 是否生效 | 看该 row 的 `config` / `inject` 是否含 patch 的值 |
+| DSH_HOME 是否分叉 | `ps eww -p <pid> \| grep DSH_HOME`，再 `readlink` 它的 profiles/sessions |
+
+**常见形态**：`DSH_HOME` 指向一个独立目录（如 `~/.dsh-bili`），但该目录里
+`profiles`、`sessions`、`.credentials.yaml` 等全是**指向原 `~/.dsh` 的软链**。
+这不是分叉，是「同一份数据 + 不同启动参数」，两边看到的数据一致。
+
+> 判断是否真的分叉：`readlink ~/.dsh-bili/profiles`。
+> 输出 `/Users/you/.dsh/profiles` = 同一份；输出空（真实目录）= 真分叉，插件版本会各走各的。
+
 ---
 
 ## 插件兼容性判断
